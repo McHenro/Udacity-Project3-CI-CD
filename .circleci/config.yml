@@ -1,5 +1,20 @@
 version: 2.1
 
+commands:
+  destroy-environment:
+    description: Destroy back-end and front-end cloudformation stacks given a workflow ID.
+    parameters:
+      workflow_id:
+        type: string
+    steps:
+      - run:
+          name: Destroy environments
+          when: on_fail
+          command: |
+            aws cloudformation delete-stack --stack-name udapeople-backend-<< parameters.workflow_id>>
+            aws s3 rm s3://udapeople-<<parameters.workflow_id>> --recursive
+            aws cloudformation delete-stack --stack-name udapeople-frontend-<< parameters.workflow_id >>
+
 jobs:
   build-frontend:
     docker:
@@ -71,10 +86,11 @@ jobs:
       - restore_cache:
           keys: [frontend-scan]
       - run:
-            name: front-end scan
+            name: Scan frontend dependencies
             command: |
               cd frontend
-              npm audit --audit-level=critical
+              npm install
+              npm audit --audit-level=critical --force
 
   scan-backend:
     docker:
@@ -84,10 +100,55 @@ jobs:
       - restore_cache:
           keys: [backend-scan]
       - run:
-            name: back-end scan
+            name: Scan backend dependencies
             command: |
               cd backend
-              npm audit --audit-level=critical
+              npm install
+              npm audit --audit-level=critical --force
+
+  deploy-infrastructure:
+    docker:
+      - image: amazon/aws-cli
+    steps:
+      - checkout
+      - run:
+          name: install tar and gzip
+          command: |
+            yum update -y
+            yum install tar -y
+            yum install gzip -y
+
+      - run:
+          name: ensure back-end infrastructure exit
+          command: |
+            aws cloudformation deploy \
+              --template-file .circleci/files/backend.yml \
+              --stack-name "udapeople-backend-${CIRCLE_WORKFLOW_ID:0:7}" \
+              --parameter-overrides ID="${CIRCLE_WORKFLOW_ID:0:7}"  \
+              --tags project=udapeople
+
+       - run:
+          name: ensure front-end infrastructure exit
+          command: |
+            aws cloudformation deploy \
+             --template-file .circleci/files/frontend.yml \
+             --stack-name "udapeople-frontend-${CIRCLE_WORKFLOW_ID:0:7}" \
+             --parameter-overrides ID="${CIRCLE_WORKFLOW_ID:0:7}"  \
+             --tags project=udapeople
+
+      - run:
+          name: Add Ec2 IP into inventory.txt file for use by Ansible
+          command: |
+            aws ec2 describe-instances \
+              --filters "Name=tag:Name,Values=backend-${CIRCLE_WORKFLOW_ID:0:7}" \
+              --query 'Reservations[*].Instances[*].PublicIpAddress' \
+              --output text >> .circleci/ansible/inventory.txt
+
+      - persist_to_workspace:
+          root: ~/
+          paths:
+            - project/.circleci/ansible/inventory.txt
+          
 
 workflows:
   default:
